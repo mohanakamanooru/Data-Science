@@ -1,0 +1,267 @@
+---
+title: "exchangeForecast"
+author: "MohanaKamanooru"
+date: "28/12/2020"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+FILE_PATH         <- "raw_dataset.csv"
+  library(rvest) 
+  library(forecast)
+  library(stringr)
+  library(tidyverse)
+  library(httr)
+  library(RSelenium)
+  library(xml2)
+  library(textutils)
+  library(tseries)
+
+```
+
+
+# Pre-Processing the captured raw data set
+
+```{r exchange dataset}
+#reading the dataset and creating a data frame
+exch_raw_dataset <- read_delim(FILE_PATH,"\t", escape_double = FALSE, trim_ws = TRUE, col_names = FALSE)
+
+exch_raw_dataset <- exch_raw_dataset[-c(1,2,3),]
+
+col_name <- colnames(exch_raw_dataset)
+
+exch_raw_dataset <- separate(exch_raw_dataset,
+                             col_name,into = c("date","month","year","Rate"),
+                             convert = TRUE, 
+                             sep = " " ,
+                             )
+head(exch_raw_dataset)
+summary(exch_raw_dataset)
+
+```
+## Date Formatting 
+
+
+
+```{r exch_date, echo=FALSE}
+library(lubridate)
+exch_date <- (paste(exch_raw_dataset$date,
+                   exch_raw_dataset$month,
+                   exch_raw_dataset$year))
+exch_date_format <- as.data.frame(dmy(exch_date))
+
+exch_processed_df <- data.frame(exch_date_format,as.numeric(exch_raw_dataset$Rate))
+exch_processed_df <- na.omit(exch_processed_df)
+                               
+names(exch_processed_df)[1] <- "Date"
+names(exch_processed_df)[2] <- "Rate"
+
+head(exch_processed_df)
+```
+
+
+
+## Filtering the processed dataset
+
+
+``` {r exch_processed_df , echo= FALSE}
+
+#subsetting the dataset from 2010 to 2020
+exch_processed_df <- exch_processed_df %>% select(Date,Rate) %>%
+  filter(Date >= as.Date("2010-01-01") & Date <= as.Date("2020-11-01"))
+
+names(exch_processed_df)
+str(exch_processed_df)
+head(exch_processed_df)
+summary(exch_processed_df)
+
+```
+
+#Test and Train Data Sampling
+```{r DataSampling}
+# Sampling data 80% for training and 20% testing
+
+total_exch <- ts(exch_processed_df$Rate, start=c(2010), frequency = 12 , end = (2020))
+train_exch<- ts(exch_processed_df$Rate, start=c(2010), frequency = 12 , end = (2018))
+test_exch<- ts(exch_processed_df$Rate, start=c(2018), frequency = 12 , end = (2020))
+```
+#Train and Test <--- Naive, Mean and Drift 
+```{r Naive_Mean_Drift }
+#forecast by taking the mean of the values
+#?meanf
+mean_ex <- meanf(train_exch, h=20) 
+
+#forecast by taking the last observation forward
+#?naive
+naive_ex<- naive(train_exch, h=20) 
+
+#forecast by drift model- equivalent to an ARIMA(0,1,0) 
+drift_ex <- rwf(train_exch, h=20, drift = T) 
+
+plot(mean_ex,main = "")
+lines(naive_ex$mean, col=123, lwd = 2)
+lines(drift_ex$mean, col=22, lwd = 2)
+legend("topleft",lty=1,col=c(4,123,22),
+       legend=c("Mean method","Naive method","Drift Method"))
+
+#forecast and compare against testing data
+autoplot(total_exch) + 
+  autolayer(mean_ex$mean, series = "Mean Method") +
+  autolayer(naive_ex$mean, series = "Naive Method") +
+  autolayer(drift_ex$mean, series = "Drift Method") +
+  ggtitle("Testing Mean Naive and Drift methods") + 
+  xlab("Time (year)") + ylab("Exchange Rate") +
+  theme_bw() + theme(plot.title = element_text(hjust = 0.5),legend.position = "bottom") 
+
+```
+
+# Accuracy <--- Naive Mean and Drift
+```{r}
+# Checking the accuracy 
+accuracy(mean_ex, test_exch)
+accuracy(naive_ex, test_exch)
+accuracy(drift_ex, test_exch)
+```
+
+# Train and Test <--- Holt-Winters Seasonal (additive , multiplicative)
+```{r }
+fit1 <- hw(train_exch,seasonal="additive")
+fit2 <- hw(train_exch,seasonal="multiplicative")
+
+autoplot(total_exch) +
+  autolayer(fit1, series="HW additive forecasts", PI=FALSE) +
+  autolayer(fit2, series="HW multiplicative forecasts",
+    PI=FALSE) +
+  xlab("Year") +
+  ylab("Exchane Rate") +
+  guides(colour=guide_legend(title="Forecast"))
+```
+
+# Accuracy <-- Holt-Winters Seasonal (additive , multiplicative)
+```{r }
+
+# Accuracy 
+accuracy(forecast(fit1 , h=24), test_exch)
+accuracy(forecast(fit2 , h=24), test_exch)
+```
+
+# Train and Test <--- Holt-Winters
+```{r}
+
+train_holt <-HoltWinters(train_exch , gamma = 0)
+
+train_holt %>%
+  forecast(h=24) %>%
+  autoplot(series = "Forecast Data") + autolayer(total_exch, series = "Original Exch Data")
+
+plot(train_holt, main = " HoltWinters Trained Set")
+plot(fitted(train_holt) ,main = " Fitted( HoltWinters Trained Set)")
+```
+
+# Accuracy <-- Holt-Winters
+```{r }
+accuracy(forecast(train_holt, h=24), test_exch)
+```
+
+
+# Forecast for 24months using HoltWinters
+```{r}
+
+
+total_holt <- HoltWinters(total_exch,gamma=0)
+total_holt %>%
+  forecast(h=24) %>%
+  autoplot(series = "Forecast Data")
+```
+#ARIMA
+
+
+# Diiferencing the series to make it stationary
+```{r}
+total_exch %>% diff(lag=4) %>%diff()%>% ggtsdisplay()
+
+
+#to check how stationary the time series is.
+#?adf.test4
+# Augmented Dickey–Fuller Test - Computes the Augmented Dickey-Fuller test for the null that x has a unit root.
+adf.test(total_exch)
+
+adf.test(diff(total_exch, differences = 1))
+adf.test(diff(total_exch, differences = 2))
+
+# differentiating higher order -- over fitting the series( can get high accuracy for the test data but may not forecast better values for future)
+```
+
+# Predicting the P, D and Q values for seasonal component
+```{r}
+Arima(total_exch, order=c(0,1,1), seasonal=c(0,1,0)) #AIC=-642.85   AICc=-642.74   BIC=-637.49
+Arima(total_exch, order=c(0,1,1), seasonal=c(1,1,0)) #AIC=-687.12   AICc=-686.89   BIC=-679.07
+Arima(total_exch, order=c(0,1,1), seasonal=c(0,1,1)) #AIC=-699.35   AICc=-699.12   BIC=-691.3
+```
+
+
+# Predicting the p, d and q for ARIMA point
+```{r}
+Arima(total_exch, order=c(0,1,0), seasonal=c(0,1,0)) #AIC=-642.55   AICc=-642.51   BIC=-639.87
+Arima(total_exch, order=c(1,1,0), seasonal=c(0,1,0)) #AIC=-641.96   AICc=-641.84   BIC=-636.59
+Arima(total_exch, order=c(0,1,1), seasonal=c(0,1,0)) #AIC=-642.85   AICc=-642.74   BIC=-637.49
+Arima(total_exch, order=c(1,1,1), seasonal=c(0,1,0)) #AIC=-641.42   AICc=-641.19   BIC=-633.38
+
+# AICc is low at seasonal c PDQ 111
+
+```
+
+# Training <--- ARIMA (1,1,0) and ARIMA(1,1,1)
+```{r Training}
+
+# Analysinsg Residulas and p Value
+
+fit110 <- Arima(train_exch, order=c(1,1,0), seasonal=c(0,1,0)) # p-value = 1.28e-10  
+checkresiduals(fit110)
+
+fit111 <- Arima(train_exch, order=c(1,1,1), seasonal=c(0,1,0)) # p-value = 1.297e-09
+checkresiduals(fit111)
+
+# training 
+
+fittrain110 <- Arima(train_exch, order=c(1,1,0), seasonal=c(0,1,0))
+fittrain110 %>% forecast(h=24) %>% autoplot()+ autolayer(total_exch)
+
+fittrain111 <- Arima(train_exch, order=c(1,1,1), seasonal=c(0,1,0))
+fittrain111 %>% forecast(h=24) %>% autoplot()+ autolayer(total_exch)
+```
+
+#Predicting - autoARIMA
+```{r autoARIMASeasonal}
+auto.arima(total_exch, seasonal = TRUE , approximation = FALSE, stepwise = FALSE) # ARIMA(2,1,2)
+```
+
+# Training and Testing <--- Auto Arima(2,1,2)
+```{r autoARIMAtraining}
+fittrain212 <- Arima(train_exch, order=c(2,1,2), seasonal=c(0,1,0))
+fittrain212 %>% forecast(h=24) %>% autoplot()+ autolayer(total_exch)
+```
+
+##Accuracy <--- ARIMA (1,1,0) ARIMA(1,1,1) and ARIMA (2,1,2)
+```{r}
+accuracy(forecast(fittrain110, h=24), test_exch)
+accuracy(forecast(fittrain111, h=24), test_exch)
+accuracy(forecast(fittrain212 ,h=24), test_exch)
+```
+
+
+#Forecast - ARIMA (1,1,0) ,ARIMA(1,1,1), ARIMA (2,1,2)
+```{r forecast}
+fittrain110 <- Arima(total_exch, order=c(1,1,0), seasonal=c(0,1,0))
+fittrain110 %>% forecast(h=24) %>% autoplot()+ autolayer(total_exch)
+
+fittrain111 <- Arima(total_exch, order=c(1,1,1), seasonal=c(0,1,0))
+fittrain111 %>% forecast(h=24) %>% autoplot()+ autolayer(total_exch)
+
+fittrain212 <- Arima(total_exch, order=c(2,1,2), seasonal=c(0,1,0))
+fittrain212 %>% forecast(h=24) %>% autoplot()+ autolayer(total_exch)
+```
+

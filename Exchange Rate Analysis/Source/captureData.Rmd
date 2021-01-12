@@ -1,0 +1,102 @@
+---
+title: "captureData.Rmd"
+author: "MohanaKamanooru"
+date: "26/11/2020"
+output:
+  word_document: default
+  html_notebook: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(rvest) 
+library(stringr)
+library(tidyverse)
+library(httr)
+library(RSelenium)
+library(xml2)
+library(textutils)
+```
+
+```{r Defining Constants}
+#Defining constants 
+FILE_PATH         <- "raw_dataset.csv"
+EURO_URL          <- 'https://www.ofx.com/en-gb/forex-news/historical-exchange-rates/'
+FROM_CURRENCY     <- 'GBP British Pound'
+TO_CURRENCY       <- 'EUR Euro'
+TIME_FREQ         <- 'daily'
+TIME_PERIOD       <- 'Last 10 years'
+FROM_CURRENCY_ID  <- "select2-csid-container"
+TO_CURRENCY_ID    <- "select2-20lw-container"
+TIME_PERIOD_ID    <- "select2-xgvk-container"
+TIME_FREQ_ID      <- "historicalrates-frequency-daily"
+BUTTON_PATH       <- '/html/body/div[1]/main/div[2]/div[1]/div/div/div/div[5]/div/div/button/'
+
+
+
+# Defining the function to create Selenium web Servers -------------------
+euro_remote_server_driver <- function(local_port , local_browser, local_version, local_verbose, local_check){
+  euro_rsd <- rsDriver( port = local_port , 
+            browser = local_browser , 
+            #version = local_version, 
+            verbose = local_verbose , 
+            check = local_check)
+  euro_rcd <- euro_rsd$client
+  return(euro_rcd)
+   
+  }
+
+euro_close_connection <- function(remDriver){
+  remDriver$close()
+  return()
+}
+
+# Element accessing function ----------------------------------------------
+
+set_euro_element <- function(set_value, euro_element_id , client_driver , euro_attr){
+  euro_element <- client_driver$findElement('id', euro_element_id)
+  euro_element$setElementAttribute(euro_attr,set_value)
+}
+
+get_euro_element <- function(euro_element_id , client_driver , euro_attr){
+  euro_element <- client_driver$findElement(euro_attr, euro_element_id)
+  return (euro_element)
+}
+
+
+## creating web drivers
+# euro_client_driver <- ecd ----------------------------------------------
+
+ecd <- euro_remote_server_driver(
+  45226L,'firefox',
+  'latest',FALSE,FALSE)
+
+ecd$navigate(EURO_URL)
+ecd$maxWindowSize()
+sourcetext <- ecd$getPageSource()
+view(sourcetext)
+sourcetext
+
+RESULT_TABLE_ID    <- 'historical-rates--table'
+##setting the input parameters 
+
+from_currency_element <- set_euro_element( FROM_CURRENCY, FROM_CURRENCY_ID , ecd,'title')
+to_currency_element   <- set_euro_element( TO_CURRENCY, TO_CURRENCY_ID, ecd,'title')
+time_freq_element     <- set_euro_element( TIME_FREQ , TIME_FREQ_ID, ecd,'value')
+time_period_element   <- set_euro_element( TIME_PERIOD, TIME_PERIOD_ID, ecd,'title') 
+button_element <- ecd$findElement("xpath" , BUTTON_PATH)
+button_element$clickElement()
+
+result_table_element <- ecd$findElement('class', RESULT_TABLE_ID)
+raw_table_data <- result_table_element$getElementText()
+
+# close connection --------------------------------------------------------
+euro_close_connection()
+
+# Writing captured data into csv ------------------------------------------
+write.csv(raw_table_data,file = FILE_PATH )
+
+```
+
+
+
